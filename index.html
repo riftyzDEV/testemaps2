@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang='en'>
+  <head>
+    <meta charset='utf-8' />
+    <title>Mapbox Directions API</title>
+    <meta name='viewport' content='width=device-width, initial-scale=1' />
+    <script src='https://api.tiles.mapbox.com/mapbox-gl-js/v3.1.0/mapbox-gl.js'></script>
+    <link href='https://api.tiles.mapbox.com/mapbox-gl-js/v3.1.0/mapbox-gl.css' rel='stylesheet' />
+    <script src='https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-geocoder/v4.7.0/mapbox-gl-geocoder.min.js'></script>
+    <link
+      rel='stylesheet'
+      href='https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-geocoder/v4.7.0/mapbox-gl-geocoder.css'
+      type='text/css'
+    />
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+      }
+
+      #map {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 100%;
+      }
+
+      #geocoder {
+        position: absolute;
+        top: 20px;
+        left: 80%;
+        width: 20%;
+      }
+
+        #route-info {
+        position: absolute;
+        bottom: 80px;
+        right: 20px;
+        background-color: #fff;
+        padding: 10px;
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        display: none;
+      }
+      
+    </style>
+  </head>
+  <body>
+    <div id='map'></div>
+    <div id='geocoder'></div>
+    <div id='route-info'>
+        <p id='distance-info'></p>
+        <p id='duration-info'></p>
+      </div>
+      
+    <script>
+      mapboxgl.accessToken = 'pk.eyJ1IjoiZ3VzdGF2b3ZscSIsImEiOiJjbHM4ZGZ3NDkyYWU0MmpwaXp3Zml6NmdyIn0.C0RXh3ypanj0CLA9IfO_lw';
+      const map = new mapboxgl.Map({
+        container: 'map',
+        style: 'mapbox://styles/gustavovlq/cls9lwdwn02hu01qs4fag3ivo/draft',
+        center: [-122.662323, 45.523751],
+        zoom: 12
+      });
+
+      const start = [-122.662323, 45.523751];
+      let end = null; // Destino
+
+      const geocoder = new MapboxGeocoder({
+        accessToken: mapboxgl.accessToken,
+        mapboxgl: mapboxgl,
+        marker: {
+          color: 'orange'
+        },
+        placeholder: 'Digite o destino',
+        zoom: 12
+      });
+
+      map.addControl(geocoder);
+
+      async function getCountryFromCoordinates(coordinates) {
+        const query = await fetch(`https://api.mapbox.com/geocoding/v5/mapbox.places/${coordinates[0]},${coordinates[1]}.json?access_token=${mapboxgl.accessToken}`);
+        const json = await query.json();
+        if (json.features.length > 0) {
+          const country = json.features.find(feature => feature.place_type.includes('country'));
+          if (country) {
+            return country.properties.short_code;
+          }
+        }
+        return 'us'; // Padrão para os Estados Unidos se não puder determinar o país
+      }
+
+      async function getRoute(end) {
+        // Remova o marcador anterior se existir
+        if (map.getSource('end')) {
+          map.getSource('end').setData({
+            type: 'FeatureCollection',
+            features: []
+          });
+        }
+
+        function calculateDistance(start, end) {
+        // Função para calcular a distância entre dois pontos em quilômetros
+        const lon1 = start[0];
+        const lat1 = start[1];
+        const lon2 = end[0];
+        const lat2 = end[1];
+
+        const R = 6371; // Raio da Terra em quilômetros
+        const dLat = (lat2 - lat1) * (Math.PI / 180);
+        const dLon = (lon2 - lon1) * (Math.PI / 180);
+
+        const a =
+          Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+          Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+        const distance = R * c;
+        return distance;
+      }
+
+      function updateDistance() {
+        // Função para atualizar a distância em tempo real
+        if (end) {
+          const distance = calculateDistance(start, end.features[0].geometry.coordinates);
+          const duration = calculateDuration(distance);
+          const distanceInfo = document.getElementById('distance-info');
+          const durationInfo = document.getElementById('duration-info');
+
+          distanceInfo.textContent = `Distância até o destino: ${distance.toFixed(2)} km`;
+          durationInfo.textContent = `Tempo estimado: ${duration.toFixed(2)} minutos`;
+
+          // Exibe o bloco de informações
+          document.getElementById('route-info').style.display = 'block';
+        }
+      }
+
+      // Função para calcular a duração estimada com base na distância
+      function calculateDuration(distance) {
+        // Assumindo uma velocidade média de 15 km/h (pode ser ajustado conforme necessário)
+        const averageSpeed = 50; // em km/h
+        const durationInHours = distance / averageSpeed;
+        const durationInMinutes = durationInHours * 60;
+        return durationInMinutes;
+      }
+
+      geocoder.on('result', (event) => {
+            const coords = event.result.geometry.coordinates;
+            end = {
+              type: 'FeatureCollection',
+              features: [
+                {
+                  type: 'Feature',
+                  properties: {},
+                  geometry: {
+                    type: 'Point',
+                    coordinates: coords
+                  }
+                }
+              ]
+            };
+
+            if (map.getSource('end')) {
+              map.getSource('end').setData(end);
+            } else {
+              map.addLayer({
+                id: 'end',
+                type: 'circle',
+                source: {
+                  type: 'geojson',
+                  data: end
+                },
+                paint: {
+                  'circle-radius': 10,
+                  'circle-color': '#f30'
+                }
+              });
+            }
+
+            getRoute(end);
+          });
+
+          geocoder.on('clear', () => {
+            end = null;
+            getRoute(null);
+          });
+
+          // Adicione um botão para iniciar a rota
+          const startRouteButton = document.createElement('button');
+  startRouteButton.textContent = 'Iniciar Rota';
+  startRouteButton.style.position = 'absolute';
+  startRouteButton.style.bottom = '20px';  // Alterado para bottom
+  startRouteButton.style.right = '20px';   // Alterado para right
+  startRouteButton.style.padding = '10px';
+  startRouteButton.style.backgroundColor = '#4caf50';
+  startRouteButton.style.color = '#fff';
+  startRouteButton.style.border = 'none';
+  startRouteButton.style.borderRadius = '5px';
+  startRouteButton.style.cursor = 'pointer';
+  startRouteButton.style.fontSize = '16px';
+
+  // Adicione este bloco dentro do seu script para criar e adicionar o botão ao DOM
+  document.body.appendChild(startRouteButton);
+
+  // ...
+
+// Adicione o evento de clique para atualizar a distância
+startRouteButton.addEventListener('click', function() {
+  // Atualize a distância
+  updateDistance();
+
+  // Aproxime e deite a tela
+  map.easeTo({
+    pitch: 45, // Inclinação de 45 graus
+    zoom: 15, // Zoom para um nível mais detalhado
+    duration: 1500 // Duração da animação em milissegundos
+  });
+});
+
+
+
+// ...
+
+
+  // Adicione o evento de clique para atualizar a distância
+  startRouteButton.addEventListener('click', updateDistance);
+
+        if (!end) {
+          // Se o destino for nulo, remova o trajeto definido
+          if (map.getSource('route')) {
+            map.getSource('route').setData({
+              type: 'Feature',
+              properties: {},
+              geometry: {
+                type: 'LineString',
+                coordinates: []
+              }
+            });
+          }
+          return; // Não há destino, então não há nada a fazer
+        }
+
+        const country = await getCountryFromCoordinates(end.features[0].geometry.coordinates);
+
+        const query = await fetch(
+          `https://api.mapbox.com/directions/v5/mapbox/cycling/${start[0]},${start[1]};${end.features[0].geometry.coordinates[0]},${end.features[0].geometry.coordinates[1]}?steps=true&geometries=geojson&access_token=${mapboxgl.accessToken}`,
+          { method: 'GET' }
+        );
+        const json = await query.json();
+        const data = json.routes[0];
+        const route = data.geometry.coordinates;
+
+        if (map.getSource('route')) {
+          map.getSource('route').setData({
+            type: 'Feature',
+            properties: {},
+            geometry: {
+              type: 'LineString',
+              coordinates: route
+            }
+          });
+        } else {
+          map.addLayer({
+            id: 'route',
+            type: 'line',
+            source: {
+              type: 'geojson',
+              data: {
+                type: 'Feature',
+                properties: {},
+                geometry: {
+                  type: 'LineString',
+                  coordinates: route
+                }
+              }
+            },
+            layout: {
+              'line-join': 'round',
+              'line-cap': 'round'
+            },
+            paint: {
+              'line-color': '#6F35E1',
+              'line-width': 5,
+              'line-opacity': 0.75
+            }
+          });
+        }
+
+        // Adicione um marcador para o destino
+        map.addLayer({
+          id: 'end',
+          type: 'circle',
+          source: {
+            type: 'geojson',
+            data: end
+          },
+          paint: {
+            'circle-radius': 10,
+            'circle-color': '#00BF63'
+          }
+        });
+
+        // Zoom para a extensão da rota
+        const bounds = route.reduce((bounds, coord) => {
+          return bounds.extend(coord);
+        }, new mapboxgl.LngLatBounds(route[0], route[0]));
+
+        map.fitBounds(bounds, { padding: 50 });
+
+        console.log('Country:', country);
+      }
+
+      map.on('load', () => {
+        // Obtenha a localização do usuário ao carregar a página
+        navigator.geolocation.getCurrentPosition((position) => {
+          const { longitude, latitude } = position.coords;
+          map.setCenter([longitude, latitude]);
+          start[0] = longitude;
+          start[1] = latitude;
+
+          // Adicione o ponto inicial ao mapa
+          map.addLayer({
+            id: 'point',
+            type: 'circle',
+            source: {
+              type: 'geojson',
+              data: {
+                type: 'FeatureCollection',
+                features: [
+                  {
+                    type: 'Feature',
+                    properties: {},
+                    geometry: {
+                      type: 'Point',
+                      coordinates: start
+                    }
+                  }
+                ]
+              }
+            },
+            paint: {
+              'circle-radius': 10,
+              'circle-color': '#3887be'
+            }
+          });
+
+          // Adicione um evento de clique para obter a rota ao selecionar um destino
+          geocoder.on('result', (event) => {
+            const coords = event.result.geometry.coordinates;
+            end = {
+              type: 'FeatureCollection',
+              features: [
+                {
+                  type: 'Feature',
+                  properties: {},
+                  geometry: {
+                    type: 'Point',
+                    coordinates: coords
+                  }
+                }
+              ]
+            };
+
+            if (map.getSource('end')) {
+              map.getSource('end').setData(end);
+            } else {
+              map.addLayer({
+                id: 'end',
+                type: 'circle',
+                source: {
+                  type: 'geojson',
+                  data: end
+                },
+                paint: {
+                  'circle-radius': 10,
+                  'circle-color': '#f30'
+                }
+              });
+            }
+
+            getRoute(end);
+          });
+
+          // ...
+
+map.on('load', () => {
+  // Obtenha a localização do usuário ao carregar a página
+  navigator.geolocation.getCurrentPosition((position) => {
+    const { longitude, latitude } = position.coords;
+    map.setCenter([longitude, latitude]);
+    start[0] = longitude;
+    start[1] = latitude;
+
+    // Adicione o ponto inicial ao mapa
+    map.addLayer({
+      id: 'point',
+      type: 'circle',
+      source: {
+        type: 'geojson',
+        data: {
+          type: 'FeatureCollection',
+          features: [
+            {
+              type: 'Feature',
+              properties: {},
+              geometry: {
+                type: 'Point',
+                coordinates: start
+              }
+            }
+          ]
+        }
+      },
+      paint: {
+        'circle-radius': 10,
+        'circle-color': '#3887be'
+      }
+    });
+
+    // Adicione um evento de clique para obter a rota ao selecionar um destino
+    geocoder.on('result', (event) => {
+      const coords = event.result.geometry.coordinates;
+      end = {
+        type: 'FeatureCollection',
+        features: [
+          {
+            type: 'Feature',
+            properties: {},
+            geometry: {
+              type: 'Point',
+              coordinates: coords
+            }
+          }
+        ]
+      };
+
+      if (map.getSource('end')) {
+        map.getSource('end').setData(end);
+      } else {
+        map.addLayer({
+          id: 'end',
+          type: 'circle',
+          source: {
+            type: 'geojson',
+            data: end
+          },
+          paint: {
+            'circle-radius': 10,
+            'circle-color': '#f30'
+          }
+        });
+      }
+
+      getRoute(end);
+    });
+
+    // Adicione um evento para verificar se o campo de pesquisa está vazio
+    geocoder.on('clear', () => {
+      end = null; // Redefina o destino
+      getRoute(null); // Remova o trajeto definido
+    });
+
+    // Adicione lógica para atualizar a localização continuamente
+    setInterval(() => {
+      navigator.geolocation.getCurrentPosition((position) => {
+        const { longitude, latitude } = position.coords;
+        start[0] = longitude;
+        start[1] = latitude;
+
+        // Atualize o ponto inicial no mapa
+        map.getSource('point').setData({
+          type: 'FeatureCollection',
+          features: [
+            {
+              type: 'Feature',
+              properties: {},
+              geometry: {
+                type: 'Point',
+                coordinates: start
+              }
+            }
+          ]
+        });
+
+        // Atualize a rota se um destino estiver definido
+        if (end) {
+          getRoute(end);
+        }
+      });
+    }, 5000); // Atualizar a cada 5 segundos (5000 milissegundos)
+  });
+});
+
+
+          // Adicione um evento para verificar se o campo de pesquisa está vazio
+          geocoder.on('clear', () => {
+            end = null; // Redefina o destino
+            getRoute(null); // Remova o trajeto definido
+          });
+        });
+      });
+    </script>
+
+    
+
+  </body>
+</html>
